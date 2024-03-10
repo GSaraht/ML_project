@@ -1,0 +1,727 @@
+---
+title: "Predicting real estate prices"
+author: "Student A, Student B, Student C"
+date: "03/06/2022"
+output:
+  html_document:
+    code_folding: show
+  word_document: default
+  pdf_document: default
+bibliography: citations.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, error = FALSE)
+```
+
+## 1. Abstract
+_By B_
+
+The consultant company KKG is in charge of creating an algorithm that predicts
+real estate prices for the company XY. First, while the team conducted exploratory 
+data analysis (EDA), the data preparation was done simultaneously. After this the
+models were build to predict the real estate price. The results of each findings are
+illustrated per model chapter. The results of comparing the models are at the end of the report.
+
+## 2. Introduction
+_By C_
+
+When it comes to real estate, one factor that is of great importance is the price of a property. Whether it is for individuals making choices on taking on a mortgage or for companies deciding to invest in certain areas, the price of property is a driving factor of theses choices individuals and companies make. 
+
+Being able to predict the sale price of a property could therefore improve stakeholders insight and knowledge into this area. Customers or buyers could be helped by providing an algorithm that forecasts and evaluates an objects price and informs them about what factory influence this mentioned price. On the other hand, real estates agencies could can use such an algorithm to price their real estate portfolio more reliably and accurate than before. Investment companies could use such a solution to evaluate suitable or under priced properties to be able to make lucrative investments.
+
+For this project, we wanted to evaluate whether it was possible to build algorithms that were able to predict real estate prices. The data we used was taken from Kaggle.com and contains information about residential real estate in Ames, Iowa in the United States. 
+
+In a first part, we explore the data and make it processable for out models. The second part tests the applicability of linear models. In the third part, we apply more advanced methods such as Support Vector Machines and Neural Networks. At the end, we compare the performance of the tested model with each other. 
+
+## 3. Setup and preparation
+
+### 3.1 Loading the Packages
+
+```{r messa=FALSE, warning=FALSE}
+# setting the seed for reproduceability
+set.seed(42)
+
+# General imports
+library("tidyr")
+library("ggplot2")
+library("dplyr")
+library("ggpubr")
+library("Hmisc")
+library("patchwork")
+library("knitr")
+
+# Linear regression libraries
+library("lmtest")
+library("psych")
+library("leaps")
+library("gridExtra")
+library("mgcv")
+
+# SVM libraries
+library("e1071") 
+library("caret")
+
+# Neural network libraries
+library("neuralnet")
+
+# general theme
+theme_set(theme_bw())
+
+```
+
+### 3.2 Loading the Data
+
+Load the `train.csv` data set into our environment.
+
+```{r}
+# load training data set
+# setwd("C:/Users/Pepin/Documents/FS2/MachineLearning/Project")
+setwd("~/Master/FS 2022/Machine Learning 1/Project")
+
+# load training data set
+housing_price_data = read.csv('housing.csv')
+```
+
+### 3.3 Prepare/Clean the Data
+_By C_
+
+The first thing we want to do is to identify the columns with NA values in order to do a proper EDA.
+
+```{r}
+# list column names with NA values
+names(which(colSums(is.na(housing_price_data))>0))
+```
+
+After identifying which columns contain NA values, we need to deal with them. For some columns that have character encoding, a missing value means that the attribute is not present for the observation. In these cases, we replace their value with a 'No' string.
+
+```{r}
+na_column_list <- c('Alley', 'BsmtQual', 'BsmtCond', 'BsmtExposure', 'BsmtFinType1', 
+                    'BsmtFinType2', 'FireplaceQu', 'GarageType', 'GarageFinish', 
+                    'GarageQual','GarageCond', 'PoolQC', 'Fence', 'MiscFeature')
+
+to_replace <- housing_price_data[na_column_list]
+to_replace[is.na(to_replace)] <- 'No'
+housing_price_data[na_column_list] <- to_replace
+```
+
+For the column GarageYrBlt, we replace the missing values with the value 0.
+
+```{r}
+housing_price_data$GarageYrBlt <- housing_price_data$GarageYrBlt %>% replace_na(0)
+```
+
+Since the number of observations that contain a NA value in either the column 'Electrical' or 'MasVnrType' is minimal, we can drop these observations without losing a lot of valuable data.
+
+```{r}
+housing_price_data <- housing_price_data %>% drop_na('Electrical')
+housing_price_data <- housing_price_data %>% drop_na('MasVnrType')
+```
+
+For the column 'LotFrontage' on the other hand, we have so many NA values that we decided to drop the column entirely to not let this feature distort our predictions. We also drop the column 'Id', since it is of no use for the forecast.
+
+```{r}
+housing_price_data <- subset(housing_price_data, select = -c(LotFrontage))
+housing_price_data <- subset(housing_price_data, select = -c(Id))
+
+```
+
+In order to be able to use the data for different models later on, it needed to be stored as the appropriate type and to have the correct format. 
+
+* Format: We transform all columns with a factor encoding into numerically encoded  ones.
+```{r}
+housing_price_data <- housing_price_data %>% mutate_if(is.factor, as.numeric)
+```
+
+* Format: We transform all columns with a character encoding into factor encoded ones.
+```{r}
+housing_price_data <- housing_price_data %>% mutate_if(is.character, factor)
+```
+
+* Type: We changed some variables that were falsely stored as numeric into factors.
+
+```{r}
+# List of all columns that should be factors
+
+l.factor_columns <- c("MSSubClass", 'MSZoning', "OverallQual",
+                    "OverallCond","BsmtFullBath",
+                    "BsmtHalfBath", "FullBath",
+                    "HalfBath","MoSold")
+    
+# Turn integer variables into factors
+housing_price_data[l.factor_columns] <- lapply(housing_price_data[l.factor_columns], factor)
+housing_price_data$log.price <- log(housing_price_data$SalePrice)
+
+```
+
+
+## 4. EDA
+_By C and B_
+
+Starting with the number of observations, the variables types and the range of housing sales prices.
+```{r class.source = 'fold-hide'}
+#data types int, num, df contains: 1449 obs of 79 variables
+#str(housing_price_data)
+summary(housing_price_data$SalePrice)
+```
+The distribution of the sales prices ranges from 34k to approx. 213k US dollars with one outlier property which has been sold for 625k US dollars.
+
+The response variable SalePrice is right skewed. Therefore we transformed it with the log() function and added it as a new variable, 'log.price', to the dataframe.
+
+```{r class.source = 'fold-hide'}
+#check the sale prices of the properties
+count <- ggplot(data = housing_price_data) + 
+  geom_histogram(mapping = aes(x = SalePrice), bins = 100)
+
+
+log_count <- ggplot(data = housing_price_data ) + 
+  geom_histogram(mapping = aes(x = log.price), bins = 100)
+
+count + log_count
+```
+
+What we can see is that we have two observations that have a very high price. In order not to distort our predictions, we decided to remove there two predictions.
+
+```{r}
+
+housing_price_data <- housing_price_data[housing_price_data$SalePrice < 650000,]
+```
+In the following, we display the correlation between the variable OverallQual and SalePrice, by plotting it first in a boxplot and then in a scatterplot.
+
+```{r class.source = 'fold-hide'}
+quality <-ggplot(data = housing_price_data,
+       aes(y=SalePrice, x=OverallQual, group=OverallQual,fill=OverallQual)) +
+  geom_boxplot(alpha=0.3)+ theme(legend.position="none")+
+  labs(title = "Overall Quality vs. Sale Price", x="Quality", y="Price")
+quality
+```
+
+Scatter plot for overall quality of the house.[@Density]
+```{r class.source = 'fold-hide'}
+quality_scatter <- ggplot(data = housing_price_data,
+                          aes(x = SalePrice, y = OverallQual)) +
+  geom_point(color = 'red') + stat_smooth(method = 'lm')
+
+
+quality_scatter
+```
+Looking at other variables e.g., GrLivArea
+```{r class.source = 'fold-hide'}
+ggplot(data = housing_price_data) + 
+  geom_point(mapping = aes(x = SalePrice, y = GrLivArea), alpha = 1 / 10)
+
+```
+
+As the last step before building our prediction models, we need to split the data into a test and training set.
+
+```{r class.source = 'fold-hide'}
+indexes <- createDataPartition(housing_price_data$SalePrice, p = .75, list = F)
+
+train <- housing_price_data[indexes, ]
+test <- housing_price_data[-indexes, ]
+```
+
+
+## 5. Linear Regression
+
+_By A_
+
+For the linear regression model the first step was to find out, which predictors to include in our lm model. We fist had a look at the visual relationship between the log.price and all other numerical variables to see which predictors had a linear relationship with the response variable. 
+```{r class.source = 'fold-hide', message=FALSE}
+numeric_columns <- train %>% select_if(is.numeric) %>% select(-SalePrice)
+
+p <- list()
+loop.vector <- 1:(length(numeric_columns))
+for (i in loop.vector) {
+  column_title <- colnames(numeric_columns)[i]
+  p[[i]] <- (ggscatter(numeric_columns, x = column_title,
+            y = "log.price", add = "reg.line", conf.int = TRUE,
+            cor.coef = TRUE, cor.method = "pearson",
+            xlab = column_title, ylab = "log.price"))
+  
+}
+variable_plots <- marrangeGrob(p[1:27], nrow=3, ncol=3)
+variable_plots
+```
+
+Variables that visually showed a linear relationship with the response variable were further considered as predictors in the linear regression model.
+```{r class.source = 'fold-hide',  message=FALSE}
+# Variables that visually showed a linear relationship with the response variable 'log.price' were added to the list 'l.linear_variables' and then used to subset numeric_columns, so that only the variables with a linear relationship with log.price remained in 'numeric_columns'.
+
+l.linear_variables <- c("GrLivArea", "X2ndFlrSF", "X1stFlrSF", "TotalBsmtSF", "BsmtFinSF1", "MasVnrArea", "YearRemodAdd", "YearBuilt", "LotArea", "BsmtUnfSF", "KitchenAbvGr", "BedroomAbvGr", "log.price")
+
+linear_numeric_columns <- select(numeric_columns, l.linear_variables)
+```
+
+We chose to create two linear regression models based on two different approaches:
+
+1. In the first lm model the numeric predictors were chosen, if they strongly significantly correlated with the log.price.
+
+2. In the second lm model the predictors were chosen based on what real estate agents suggest are the most influential features of a house on its price. This model includes numeric and categorical data.
+
+For the first model we analysed, which predictors had the highest correlation with the response variable.
+```{r class.source = 'fold-hide',  message=FALSE}
+# Find out which predictors correlate with log.price.
+price_cor <- cor(linear_numeric_columns, linear_numeric_columns$log.price)
+p <- corr.test(linear_numeric_columns, linear_numeric_columns$log.price)$p
+
+table_correlation <- data.frame(cbind(price_cor, p))
+colnames(table_correlation) <- c("pearson correlation","pvalue")
+
+significant_correlations <- subset(table_correlation, pvalue < 0.05)
+print(significant_correlations)
+```
+
+We then checked for multicollinearity  and removed one variable of each pair that had strong correlation (r > 0.75)
+```{r class.source = 'fold-hide'}
+# Find out which independent variables are strongly correlated.
+  corr_simple <- function(data = numeric_columns, sig=0.75){
+  #run a correlation and drop the insignificant ones
+  df_cor <- numeric_columns %>% select(-log.price)
+  
+  corr <- cor(df_cor)
+  #prepare to drop duplicates and correlations of 1     
+  corr[lower.tri(corr,diag=TRUE)] <- NA 
+  #drop perfect correlations
+  corr[corr == 1] <- NA 
+  #turn into a 3-column table
+  corr <- as.data.frame(as.table(corr))
+  #remove the NA values from above 
+  corr <- na.omit(corr) 
+  #select significant values  
+  corr <- subset(corr, (Freq) > sig) 
+  #sort by highest correlation
+  #corr <- corr[order(-abs(corr)),] 
+  #print table
+  print(corr)
+}
+corr_simple()
+```
+
+### 5.1 Creating lm models
+
+**First linear model**
+
+The first linear regression model consists of predictors with a linear relationship based on visual analysis and strongly significant predictors according to the pearsons correlation.
+```{r}
+lm1 <- lm(log.price ~ KitchenAbvGr +  TotRmsAbvGrd +
+          Fireplaces + GarageArea +
+          WoodDeckSF + BsmtFinSF1 +
+          BsmtUnfSF + LotArea + 
+          YearBuilt + YearRemodAdd, data = train)
+```
+**Second linear model**
+
+The second linear model was created based on what real estate professionals say are the most value inducing features of a house. These features include:
+
+* living space
+
+* total number of rooms
+
+* location
+
+* year built and year updated
+
+* overall condition, @living_area
+
+* garage space, @garage
+
+* and fireplace, @fireplace
+
+```{r}
+lm2 <- lm(log.price ~ LotArea + TotRmsAbvGrd + GarageArea + YearBuilt +
+                      Fireplaces + OverallQual + YearRemodAdd + OverallCond +
+                      MSZoning + Neighborhood, 
+                      data = train)
+```
+
+### 5.2 lm forecasting
+
+```{r}
+# training the model
+lm_Model1 <- train(log.price ~  KitchenAbvGr +  TotRmsAbvGrd +
+                Fireplaces + GarageArea +
+                WoodDeckSF + BsmtFinSF1 +
+                BsmtUnfSF + LotArea + 
+                YearBuilt + YearRemodAdd,
+                data = train,
+                method = "lm",
+                preProcess = c("scale", "center"),
+                trControl = trainControl(method ="none"))
+
+
+lm_Model2 <- train(log.price ~  LotArea + TotRmsAbvGrd +
+                  GarageArea + YearBuilt + Fireplaces + OverallQual +
+                  YearRemodAdd + OverallCond + MSZoning + Neighborhood,
+                  data = train,
+                  method = "lm",
+                  preProcess = c("scale", "center"),
+                  trControl = trainControl(method ="none"))
+```
+
+To see how the model performed, we plot the predictions against the actual values and look how they compared to each other. As metric to evaluate the performance, we used the RMSE value.
+
+```{r class.source = 'fold-hide'}
+
+# Apply model for prediction
+prediction_lm_model1 <- predict(lm_Model1, test)
+prediction_lm_model2 <- predict(lm_Model2, test)
+
+# Model performance (displays scatter plot and performance metrics)
+# Scatter plot of Training set
+plot(test$log.price, prediction_lm_model1, col = "blue")
+RMSE_lm1 <- sqrt(mean((test$log.price - prediction_lm_model1)^2))
+cat("RSME Value of 1. lm model:", RMSE_lm1 )
+
+plot(test$log.price, prediction_lm_model2, col = "blue")
+RMSE_lm2 <- sqrt(mean((test$log.price - prediction_lm_model2)^2))
+cat("RSME Value of 2. lm model:", RMSE_lm2 )
+
+```
+
+## 6 GLM with family set to Poisson
+
+_By A_
+
+Next we built a glm model with the familiy set to 'Poisson'. This model suits the data better as the Sales Prices is count data. We used the same predictors as for the linear regression model. 
+
+```{r}
+glm.poisson1 <- glm(SalePrice ~ KitchenAbvGr +  TotRmsAbvGrd +
+                    Fireplaces + GarageArea +
+                    WoodDeckSF + BsmtFinSF1 +
+                    BsmtUnfSF + LotArea + 
+                    YearBuilt + YearRemodAdd,
+                    family = "poisson", 
+                    data = train)
+
+
+glm.poisson2 <- glm(SalePrice ~ LotArea + TotRmsAbvGrd +
+                    GarageArea + YearBuilt + YearRemodAdd +
+                    Fireplaces + OverallQual  + OverallCond +
+                    MSZoning + Neighborhood,
+                    family = "poisson", 
+                    data = train)
+```
+
+### 6.1 Forecasting GLM with family set to Poisson
+
+To see how the model performed, we plot the predictions against the actual values. As metric to evaluate the performance, we used the RMSE value.
+
+```{r class.source = 'fold-hide'}
+prediction_poisson1 <- predict(glm.poisson1, test)
+prediction_poisson2 <- predict(glm.poisson2, test)
+
+# Model performance (displays scatter plot and performance metrics)
+# Scatter plot of Training set
+plot(test$log.price, prediction_poisson1, col = "blue")
+RMSE_poisson1 <- sqrt(mean((test$log.price - prediction_poisson1)^2))
+cat("RSME Value of 2. poisson model:", sqrt(mean((test$log.price - prediction_poisson1)^2)))
+
+plot(test$log.price, prediction_poisson2, col = "blue")
+RMSE_poisson2 <- sqrt(mean((test$log.price - prediction_poisson2)^2))
+cat("RSME Value of 2. poisson model:", sqrt(mean((test$log.price - prediction_poisson2)^2)))
+```
+
+As expected the glm poisson and lm model prediction accuracy is almost identical.
+
+
+## 7. Generalised Additive Model
+
+_By B_
+
+From the chapter linear regression we found out which variables correlate with the SalePrice/log.price and have a linear relationship. Therefore, we took a closer look to the variables that do not have a linear relationship. 
+First we calculated the correlations. (To save space we commented it out)
+```{r class.source = 'fold-hide'}
+#Calculate correlations
+housing_price_data <- housing_price_data %>% mutate_if(is.character, factor)
+housing_price_data <- housing_price_data %>% mutate_if(is.factor, as.numeric)
+train <- train %>% mutate_if(is.factor, as.numeric)
+ data_cor <- cor(housing_price_data[ , colnames(housing_price_data) != "log.price"], housing_price_data$log.price)
+#Print correlation values
+#data_cor
+
+```
+After that we reduced the amount of variables by not considering the negative ones and remained with 13 variables. From there on we plotted 6 variables.
+```{r class.source = 'fold-hide'}
+#plotting variables correlating (>0.1) with log.price that are not linear
+OverallQualy <- ggplot(train, aes(y=log.price, x=OverallQual)) +
+  geom_point()+ geom_smooth(method=lm)
+
+foundation <- ggplot(train, aes(y=log.price, x=Foundation)) +
+  geom_point()+ geom_smooth(method=lm)
+
+cair <- ggplot(train, aes(y=log.price, x=CentralAir)) +
+  geom_point()+ geom_smooth(method=lm)
+
+roofsty <- ggplot(train, aes(y=log.price, x=RoofStyle)) +
+  geom_point()+ geom_smooth(method=lm)
+
+housesty <- ggplot(train, aes(y=log.price, x=HouseStyle)) +
+  geom_point()+ geom_smooth(method=lm)
+
+neighbourhood <- ggplot(train, aes(y=log.price, x=Neighborhood)) +
+  geom_point()+ geom_smooth(method=lm)
+
+# Exterior2nd2  <- ggplot(train, aes(y=log.price, x=Exterior2nd)) +
+#   geom_point()+ geom_smooth(method=lm)
+# 
+# ExterCond <- ggplot(train, aes(y=log.price, x=ExterCond)) +
+#   geom_point()+ geom_smooth(method=lm)
+# 
+# Exterior1st1 <- ggplot(train, aes(y=log.price, x=Exterior1st)) +
+#   geom_point()+ geom_smooth(method=lm)
+
+OverallQualy + foundation + cair + roofsty + housesty + neighbourhood
+#Exterior2nd2 + ExterCond + Exterior1st1 
+
+```
+We build our models based on neighborhood and foundation.
+
+### 7.1 Creating first GAM Model
+
+The first model only contains neighborhood as a smoother.
+```{r}
+#build model
+gam1 <- gam(log.price~ s(Neighborhood), data = train)
+summary(gam1)
+plot(gam1, residuals = TRUE, cex = 2)
+
+# Make predictions
+test <- test %>% mutate_if(is.factor, as.numeric)
+predictions_gam1 <- gam1 %>% predict(test)
+# Model performance
+RMSE_gam1 <- RMSE(predictions_gam1, test$log.price)
+data.frame(
+  RMSE = RMSE(predictions_gam1, test$log.price),
+  R2 = R2(predictions_gam1, test$log.price)
+)
+
+```
+
+### 7.2 Second GAM Model
+
+In the second model we used neighborhood and foundation as smoothers.
+```{r}
+#model containing more predictors
+gam2 <- gam(log.price ~ s(Neighborhood) + s(Foundation, k=6), data = train)
+summary(gam2)
+```
+The estimated degrees of freedom per variable in the summary, is quite high meaning that a highly non-linear relationship is present. Neighborhood (8.6) and Foundation (at 4.9). [@GAMsummary]
+We tried several other smoothing things but the deviance becomes greater and this indicates that the model is not good.
+We conduct a gam.check() to see how "wiggly" the model is.[@GAMWiggle]
+
+```{r}
+#Plot
+plot(gam2, residuals = TRUE, cex = 2, ask="N")
+gam.check(gam2)
+```
+Smoothing parameter selection converged after 13 iterations. Even when increasing k', neighborhood remains significant and foundation and OverallQual stay unchanged. [@gamcheck]
+
+```{r}
+#Plot the data on the same plot as the smooth itself
+#plot(gam2, rug = T)
+```
+
+```{r}
+#Make predictions
+predict_gam2 <- gam2 %>% predict(test)
+
+# Model performance
+RMSE_gam2 <- RMSE(predict_gam2, test$log.price)
+data.frame(
+  RMSE = RMSE(predict_gam2, test$log.price),
+  R2 = R2(predict_gam2, test$log.price)
+)
+
+```
+We compared the models gam1 and gam2 based on the lower deviance of their train summary, gam1 has a lower deviance and is a better model than GAM2[@Deviance]. For this decision we also took the R-squared into consideration [@Deviance2].
+
+In addition, GAM was used to model the non-linear variables, however those two variables (Foundation and Neighborhood) do not influence the Sales Price as much as the variables with a linear relationship used in the GLM. Therefore, this model might not be best suited for this business use case.
+
+## 8. SVM forecasting
+
+_By C_
+
+With the data ready, we built a first simple SVM model.
+
+```{r}
+# train the model
+model_svm <- svm(log.price~., train)
+```
+
+To see how the model performed, we decided to plot the predictions against the actual values and look how they compared to each other. As metric to evaluate the performance, we used the RMSE value.
+
+```{r class.source = 'fold-hide'}
+# predict the housing prices in the test set
+pred <- predict(model_svm, test)
+x <- 1:length(test$log.price)
+
+# compare the predictions to the actual values using a simple plot
+plot(x, test$log.price, pch=18, col="black")
+lines(x, pred, lwd="1", col="orange")
+```
+We can then calculate the RMSE value for our SVM model
+
+```{r}
+# Calculate the RMSE value to see our models performance
+RMSE_svm <- sqrt(mean((test$log.price - pred)^2))
+sqrt(mean((test$log.price - pred)^2))
+```
+
+## 9. Building a Neural Network model
+_By C_
+
+For building a neural network, we first make sure that all our variables are in numeric format.
+
+```{r}
+housing_price_data <- housing_price_data %>% mutate_if(is.character, factor)
+housing_price_data <- housing_price_data %>% mutate_if(is.factor, as.numeric)
+```
+
+
+Since we have transformed our original dataset, we split it once more into a test set and a training set.
+
+```{r}
+indices <- createDataPartition(housing_price_data$SalePrice, p = 0.75, list = FALSE)
+
+train <- housing_price_data %>% slice(indices)
+test <- housing_price_data %>% slice(-indices)
+```
+
+Since the package `neuralnet` needs scaled input features to work properly, we need to scale our variables before we train our model.
+
+```{r}
+# calculate the max and min values
+max <- apply(housing_price_data, 2, max)
+min <- apply(housing_price_data, 2, min)
+
+# store the scaled values in a new dataframe
+housing_scaled <- as.data.frame(scale(housing_price_data, center = min, scale = max - min))
+train_scaled <- housing_scaled %>% slice(indices)
+test_scaled <- housing_scaled %>% slice(-indices)
+```
+
+With having our data prepared, we can train a first model.
+
+```{r}
+# define our model
+saleprice_net = neuralnet(log.price ~ ., 
+                          train_scaled,
+                          hidden = c(2, 2), 
+                          linear.output = TRUE, 
+                          rep = 2,
+                          stepmax=1000000,
+                          )
+```
+
+If we wish to, we can have a look at our very simple neural network.
+
+```{r class.source = 'fold-hide'}
+
+plot(saleprice_net)
+```
+
+The next step is to compute the predictions for our scaled test data.
+
+```{r}
+# predict the scaled SalePrice
+pred_scaled <- neuralnet::compute(saleprice_net, test_scaled %>% select(-log.price))
+
+```
+
+Since the scaled values are of no real use, we descale them to gain more valuable insight.
+
+```{r}
+# descale the predictions
+pred <- pred_scaled$net.result * (max(housing_price_data$log.price) - min(housing_price_data$log.price)) + min(housing_price_data$log.price)
+
+```
+
+When descaled, we can calculate the RMSE once again to see how out model performed.
+
+```{r}
+RMSE_neuralnet_1 <- sqrt(mean((test$log.price - pred)^2))
+sqrt(mean((test$log.price - pred)^2))
+```
+
+### 9.1 Improving the Neural Network model
+
+_By C_
+
+To improve the performance of our neural network, we make use of the package `caret`. In a first step, we define a tuning grid for the different layers of the network (we go for three due to computational limits) and several train control parameters. 
+For our model, we decided to use the repeated cross-validation.
+
+```{r}
+# define tuning grid
+tuGrid <- expand.grid(.layer1=c(1:4), .layer2=c(1:2), .layer3=c(1:2))
+
+# define the train control parameters
+trCtrl <- trainControl(
+  method = 'repeatedcv',
+  number = 6,
+  repeats = 3,
+  returnResamp = 'final'
+)
+```
+
+The syntax to train our model has slightly changed to before. This time, we use `caret`'s train function to train our model for different parameters each time. Depending on the hardware at hand, this can take some time to finish.
+
+```{r}
+models <- train(
+  x = train_scaled %>% select(-log.price),
+  y = train_scaled %>% pull(log.price),
+  method = 'neuralnet', 
+  metric = 'RMSE',
+  linear.output = TRUE,
+  stepmax=1000000,
+  tuneGrid = tuGrid,
+  trControl = trCtrl
+  )
+```
+
+When the training has finished, we can see how the models trained on the different parameters have performed by first of all plotting them.
+
+```{r class.source = 'fold-hide'}
+plot(models$finalModel)
+```
+
+After that, we can choose the best performing model and predict the SalePrice for our test set.
+
+```{r}
+# predict the scaled SalePrice
+pred_scaled <- predict(models$finalModel, test_scaled %>% select(-log.price))
+```
+
+The next step is to descale the predictions...
+
+```{r}
+# descale
+pred <- pred_scaled * (max(housing_price_data$log.price) - min(housing_price_data$log.price)) + min(housing_price_data$log.price)
+
+```
+
+... and finally calculate the RMSE once more.
+
+```{r}
+RMSE_neuralnet_2 <- sqrt(mean((test$log.price - pred)^2))
+sqrt(mean((test$log.price - pred)^2))
+
+```
+
+## 10. Results
+
+As a conclusion, we want to compare our different models with each other. We do this by looking at their respective RMSE values. the results of this comparison can be seen in the table below:
+
+```{r}
+
+models <- c("Linear model 1", "Linear model 2", "Poisson model 1", "Poisson model 2","GAM model 1", "GAM model 2","SVM model","Neural Network", "Optimized Neural Network")
+rmse <- c(RMSE_lm1, RMSE_lm2, RMSE_poisson1, RMSE_poisson2, RMSE_gam1, RMSE_gam2, RMSE_svm, RMSE_neuralnet_1, RMSE_neuralnet_2)
+
+df <- data.frame(models, rmse)
+knitr::kable(df, col.names=c('Model','RMSE value'))
+
+```
+
+What we can see from the table is that generally speaking, more complex models such as the SVM and the neural network tend to have lower RMSE values than the linear models. The two best models are the neural network and the optimized neural network, although the difference between those two is comparatively smaller than compared to other algorithms.
+
+## 11. References
